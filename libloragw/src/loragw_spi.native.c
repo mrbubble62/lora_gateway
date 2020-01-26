@@ -56,9 +56,21 @@ Maintainer: Sylvain Miermont
 #define SPI_SPEED       8000000
 #define SPI_DEV_PATH    "/dev/spidev0.0"
 //#define SPI_DEV_PATH    "/dev/spidev32766.0"
+char* spi_dev_path = SPI_DEV_PATH;
 
 /* -------------------------------------------------------------------------- */
 /* --- PUBLIC FUNCTIONS DEFINITION ------------------------------------------ */
+
+/* set SPI device */
+int lgw_spi_set_path(const char *path) {
+    if (path) {
+        spi_dev_path = path;
+        return LGW_SPI_SUCCESS;
+    }
+    else {
+        return LGW_SPI_ERROR;
+    }
+}
 
 /* SPI initialization and configuration */
 int lgw_spi_open(void **spi_target_ptr) {
@@ -78,7 +90,7 @@ int lgw_spi_open(void **spi_target_ptr) {
     }
 
     /* open SPI device */
-    dev = open(SPI_DEV_PATH, O_RDWR);
+    dev = open(spi_dev_path, O_RDWR);
     if (dev < 0) {
         DEBUG_PRINTF("ERROR: failed to open SPI device %s\n", SPI_DEV_PATH);
         return LGW_SPI_ERROR;
