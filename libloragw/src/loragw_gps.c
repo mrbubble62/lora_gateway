@@ -255,7 +255,13 @@ int lgw_gps_enable(char *tty_path, char *gps_family, speed_t target_brate, int *
     int i;
     struct termios ttyopt; /* serial port options */
     int gps_tty_dev; /* file descriptor to the serial port of the GNSS module */
-													   
+    uint8_t ubx_cmd_timegps[UBX_MSG_NAVTIMEGPS_LEN] = {
+                    0xB5, 0x62, /* UBX Sync Chars */
+                    0x06, 0x01, /* CFG-MSG Class/ID */
+                    0x08, 0x00, /* Payload length */
+                    0x01, 0x20, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, /* Enable NAV-TIMEGPS output on serial */
+                    0x32, 0x94 }; /* Checksum */
+    ssize_t num_written;												   
 													
 													  
 													
