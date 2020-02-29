@@ -57,7 +57,7 @@ Maintainer: Michael Coracin
 #define MINUS_10PPM         0.99999
 #define DEFAULT_BAUDRATE    B9600
 
-#define UBX_MSG_NAVTIMEGPS_LEN  16
+#define UBX_MSG_NAVTIMEGPS_LEN  16								  
 
 /* -------------------------------------------------------------------------- */
 /* --- PRIVATE VARIABLES ---------------------------------------------------- */
@@ -255,13 +255,6 @@ int lgw_gps_enable(char *tty_path, char *gps_family, speed_t target_brate, int *
     int i;
     struct termios ttyopt; /* serial port options */
     int gps_tty_dev; /* file descriptor to the serial port of the GNSS module */
-    uint8_t ubx_cmd_timegps[UBX_MSG_NAVTIMEGPS_LEN] = {
-                    0xB5, 0x62, /* UBX Sync Chars */
-                    0x06, 0x01, /* CFG-MSG Class/ID */
-                    0x08, 0x00, /* Payload length */
-                    0x01, 0x20, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, /* Enable NAV-TIMEGPS output on serial */
-                    0x32, 0x94 }; /* Checksum */
-    ssize_t num_written;
 
     /* check input parameters */
     CHECK_NULL(tty_path);
@@ -276,15 +269,8 @@ int lgw_gps_enable(char *tty_path, char *gps_family, speed_t target_brate, int *
     *fd_ptr = gps_tty_dev;
 
     /* manage the different GPS modules families */
-    if (gps_family == NULL) {
-        DEBUG_MSG("WARNING: this version of GPS module may not be supported\n");
-    } else if (strncmp(gps_family, "ubx7", 4) != 0) {
-        /* The current implementation relies on proprietary messages from U-Blox */
-        /* GPS modules (UBX, NAV-TIMEGPS...) and has only be tested with a u-blox 7. */
-        /* Those messages allow to get NATIVE GPS time (no leap seconds) required */
-        /* for class-B handling and GPS synchronization */
-        /* see lgw_parse_ubx() function for details */
-        DEBUG_MSG("WARNING: this version of GPS module may not be supported\n");
+    if (gps_family != NULL) {
+        DEBUG_MSG("WARNING: gps_family parameter ignored for now\n"); // TODO
     }
 
     /* manage the target bitrate */
@@ -301,44 +287,21 @@ int lgw_gps_enable(char *tty_path, char *gps_family, speed_t target_brate, int *
 
     /* Save current serial port configuration for restoring later */
     memcpy(&ttyopt_restore, &ttyopt, sizeof ttyopt);
-
     /* update baudrates */
     cfsetispeed(&ttyopt, DEFAULT_BAUDRATE);
     cfsetospeed(&ttyopt, DEFAULT_BAUDRATE);
 
     /* update terminal parameters */
-    /* The following configuration should allow to:
-            - Get ASCII NMEA messages
-            - Get UBX binary messages
-            - Send UBX binary commands
-        Note: as binary data have to be read/written, we need to disable
-              various character processing to avoid loosing data */
-    /* Control Modes */
-    ttyopt.c_cflag |= CLOCAL;  /* local connection, no modem control */
-    ttyopt.c_cflag |= CREAD;   /* enable receiving characters */
-    ttyopt.c_cflag |= CS8;     /* 8 bit frames */
+    ttyopt.c_cflag |= CLOCAL; /* local connection, no modem control */
+    ttyopt.c_cflag |= CREAD; /* enable receiving characters */
+    ttyopt.c_cflag |= CS8; /* 8 bit frames */
     ttyopt.c_cflag &= ~PARENB; /* no parity */
     ttyopt.c_cflag &= ~CSTOPB; /* one stop bit */
-    /* Input Modes */
-    ttyopt.c_iflag |= IGNPAR;  /* ignore bytes with parity errors */
-    ttyopt.c_iflag &= ~ICRNL;  /* do not map CR to NL on input*/
-    ttyopt.c_iflag &= ~IGNCR;  /* do not ignore carriage return on input */
-    ttyopt.c_iflag &= ~IXON;   /* disable Start/Stop output control */
-    ttyopt.c_iflag &= ~IXOFF;  /* do not send Start/Stop characters */
-    /* Output Modes */
-    ttyopt.c_oflag = 0;        /* disable everything on output as we only write binary */
-    /* Local Modes */
-    ttyopt.c_lflag &= ~ICANON; /* disable canonical input - cannot use with binary input */
-    ttyopt.c_lflag &= ~ISIG;   /* disable check for INTR, QUIT, SUSP special characters */
-    ttyopt.c_lflag &= ~IEXTEN; /* disable any special control character */
-    ttyopt.c_lflag &= ~ECHO;   /* do not echo back every character typed */
-    ttyopt.c_lflag &= ~ECHOE;  /* does not erase the last character in current line */
-    ttyopt.c_lflag &= ~ECHOK;  /* do not echo NL after KILL character */
-
-    /* settings for non-canonical mode
-       read will block for until the lesser of VMIN or requested chars have been received */
-    ttyopt.c_cc[VMIN]  = LGW_GPS_MIN_MSG_SIZE;
-    ttyopt.c_cc[VTIME] = 0;
+    ttyopt.c_iflag |= IGNPAR; /* ignore bytes with parity errors */
+    ttyopt.c_iflag |= ICRNL; /* map CR to NL */
+    ttyopt.c_iflag |= IGNCR; /* Ignore carriage return on input */
+    ttyopt.c_lflag |= ICANON; /* enable canonical input */
+    ttyopt.c_lflag &= ~ECHO; /* disable input re-echoed as output */
 
     /* set new serial ports parameters */
     i = tcsetattr(gps_tty_dev, TCSANOW, &ttyopt);
@@ -347,13 +310,6 @@ int lgw_gps_enable(char *tty_path, char *gps_family, speed_t target_brate, int *
         return LGW_GPS_ERROR;
     }
     tcflush(gps_tty_dev, TCIOFLUSH);
-
-    /* Send UBX CFG NAV-TIMEGPS message to tell GPS module to output native GPS time */
-    /* This is a binary message, serial port has to be properly configured to handle this */
-    num_written = write (gps_tty_dev, ubx_cmd_timegps, UBX_MSG_NAVTIMEGPS_LEN);
-    if (num_written != UBX_MSG_NAVTIMEGPS_LEN) {
-        DEBUG_MSG("ERROR: Failed to write on serial port (written=%d)\n", (int) num_written);
-    }
 
     /* get timezone info */
     tzset();
@@ -368,176 +324,49 @@ int lgw_gps_enable(char *tty_path, char *gps_family, speed_t target_brate, int *
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
 
-int lgw_gps_disable(int fd) {
-    int i;
-
-    /* restore serial ports parameters */
-    i = tcsetattr(fd, TCSANOW, &ttyopt_restore);
-    if (i != 0){
-        DEBUG_MSG("ERROR: IMPOSSIBLE TO RESTORE TTY PORT CONFIGURATION\n");
-        return LGW_GPS_ERROR;
-    }
-    tcflush(fd, TCIOFLUSH);
-
-    i = close(fd);
-    if (i <= 0) {
-        DEBUG_MSG("ERROR: TTY PORT FAIL TO CLOSE\n");
-        return LGW_GPS_ERROR;
-    }
-
-    return LGW_GPS_SUCCESS;
-}
-
-/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
-
-enum gps_msg lgw_parse_ubx(const char *serial_buff, size_t buff_size, size_t *msg_size) {
-    bool valid = 0;    /* iTOW, fTOW and week validity */
-    unsigned int payload_length;
-    uint8_t ck_a, ck_b;
-    uint8_t ck_a_rcv, ck_b_rcv;
-    unsigned int i;
-
-    *msg_size = 0; /* ensure msg_size alway receives a value */
-
-    /* check input parameters */
-    if (serial_buff == NULL) {
-        return IGNORED;
-    }
-    if (buff_size < 8) {
-        DEBUG_MSG("ERROR: TOO SHORT TO BE A VALID UBX MESSAGE\n");
-        return IGNORED;
-    }
-
-    /* display received serial data and checksum */
-    DEBUG_MSG("Note: parsing UBX frame> ");
-    for (i=0; i<buff_size; i++) {
-        DEBUG_MSG("%02x ", serial_buff[i]);
-    }
-    DEBUG_MSG("\n");
-
-    /* Check for UBX sync chars 0xB5 0x62 */
-    if ((serial_buff[0] == (char)0xB5) && (serial_buff[1] == (char)0x62)) {
-
-        /* Get payload length to compute message size */
-        payload_length  = (uint8_t)serial_buff[4];
-        payload_length |= (uint8_t)serial_buff[5] << 8;
-        *msg_size = 6 + payload_length + 2; /* header + payload + checksum */
-
-        /* check for complete message in buffer */
-        if(*msg_size <= buff_size) {
-            /* Validate checksum of message */
-            ck_a_rcv = serial_buff[*msg_size-2]; /* received checksum */
-            ck_b_rcv = serial_buff[*msg_size-1]; /* received checksum */
-            /* Use 8-bit Fletcher Algorithm to compute checksum of actual payload */
-            ck_a = 0; ck_b = 0;
-            for (i=0; i<(4 + payload_length); i++) {
-                ck_a = ck_a + serial_buff[i+2];
-                ck_b = ck_b + ck_a;
-            }
-
-            /* Compare checksums and parse if OK */
-            if ((ck_a == ck_a_rcv) && (ck_b == ck_b_rcv)) {
-                /* Check for Class 0x01 (NAV) and ID 0x20 (NAV-TIMEGPS) */
-                if ((serial_buff[2] == 0x01) && (serial_buff[3] == 0x20)) {
-                    /* Check validity of information */
-                    valid = serial_buff[17] & 0x3; /* towValid, weekValid */
-                    if (valid) {
-                        /* Parse buffer to extract GPS time */
-                        /* Warning: payload byte ordering is Little Endian */
-                        gps_iTOW =  (uint8_t)serial_buff[6];
-                        gps_iTOW |= (uint8_t)serial_buff[7] << 8;
-                        gps_iTOW |= (uint8_t)serial_buff[8] << 16;
-                        gps_iTOW |= (uint8_t)serial_buff[9] << 24; /* GPS time of week, in ms */
-
-                        gps_fTOW =  (uint8_t)serial_buff[10];
-                        gps_fTOW |= (uint8_t)serial_buff[11] << 8;
-                        gps_fTOW |= (uint8_t)serial_buff[12] << 16;
-                        gps_fTOW |= (uint8_t)serial_buff[13] << 24; /* Fractional part of iTOW, in ns */
-
-                        gps_week =  (uint8_t)serial_buff[14];
-                        gps_week |= (uint8_t)serial_buff[15] << 8; /* GPS week number */
-
-                        gps_time_ok = true;
-#if 0
-                        /* For debug */
-                        {
-                            short ubx_gps_hou = 0; /* hours (0-23) */
-                            short ubx_gps_min = 0; /* minutes (0-59) */
-                            short ubx_gps_sec = 0; /* seconds (0-59) */
-
-                            /* Format GPS time in hh:mm:ss based on iTOW */
-                            ubx_gps_sec = (gps_iTOW / 1000) % 60;
-                            ubx_gps_min = (gps_iTOW / 1000 / 60) % 60;
-                            ubx_gps_hou = (gps_iTOW / 1000 / 60 / 60) % 24;
-                            printf("  GPS time = %02d:%02d:%02d\n", ubx_gps_hou, ubx_gps_min, ubx_gps_sec);
-                        }
-#endif
-                    } else { /* valid */
-                        gps_time_ok = false;
-                    }
-
-                    return UBX_NAV_TIMEGPS;
-                } else if ((serial_buff[2] == 0x05) && (serial_buff[3] == 0x00)) {
-                    DEBUG_MSG("NOTE: UBX ACK-NAK received\n");
-                    return IGNORED;
-                } else if ((serial_buff[2] == 0x05) && (serial_buff[3] == 0x01)) {
-                    DEBUG_MSG("NOTE: UBX ACK-ACK received\n");
-                    return IGNORED;
-                } else { /* not a supported message */
-                    DEBUG_MSG("ERROR: UBX message is not supported (%02x %02x)\n", serial_buff[2], serial_buff[3]);
-                    return IGNORED;
-                }
-            } else { /* checksum failed */
-                DEBUG_MSG("ERROR: UBX message is corrupted, checksum failed\n");
-                return INVALID;
-            }
-        } else { /* message contains less bytes than indicated by header */
-            DEBUG_MSG("ERROR: UBX message incomplete\n");
-            return INCOMPLETE;
-        }
-    } else { /* Not a UBX message */
-        /* Ignore messages which are not UBX ones for now */
-        return IGNORED;
-    }
-}
-
-/* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
-
-enum gps_msg lgw_parse_nmea(const char *serial_buff, int buff_size) {
+enum gps_msg lgw_parse_nmea(char *serial_buff, int buff_size) {
     int i, j, k;
     int str_index[30]; /* string index from the string chopping */
     int nb_fields; /* number of strings detected by string chopping */
     char parser_buf[256]; /* parsing modifies buffer so need a local copy */
-
+																			
     /* check input parameters */
     if (serial_buff == NULL) {
         return UNKNOWN;
     }
 
-    if(buff_size > (int)(sizeof(parser_buf) - 1)) {
+    /* display received serial data and checksum */
+    DEBUG_MSG("Note: parsing NMEA frame> %s", serial_buff);
+	if(buff_size > (int)(sizeof(parser_buf) - 1)) {
         DEBUG_MSG("Note: input string to big for parsing\n");
         return INVALID;
-    }
-
+    }				   
+						
     /* look for some NMEA sentences in particular */
-    if (buff_size < 8) {
+if (buff_size < 8) {
         DEBUG_MSG("ERROR: TOO SHORT TO BE A VALID NMEA SENTENCE\n");
         return UNKNOWN;
     } else if (!validate_nmea_checksum(serial_buff, buff_size)) {
         DEBUG_MSG("Warning: invalid NMEA sentence (bad checksum)\n");
-        return INVALID;
+        return INVALID;	   
     } else if (match_label(serial_buff, "$G?RMC", 6, '?')) {
         /*
         NMEA sentence format: $xxRMC,time,status,lat,NS,long,EW,spd,cog,date,mv,mvEW,posMode*cs<CR><LF>
         Valid fix: $GPRMC,083559.34,A,4717.11437,N,00833.91522,E,0.004,77.52,091202,,,A*00
         No fix: $GPRMC,,V,,,,,,,,,,N*00
         */
-        memcpy(parser_buf, serial_buff, buff_size);
+		memcpy(parser_buf, serial_buff, buff_size);
         parser_buf[buff_size] = '\0';
+
+        if (!validate_nmea_checksum(serial_buff, buff_size)) {
+            DEBUG_MSG("Warning: invalid RMC sentence (bad checksum)\n");
+            return INVALID;
+        }
+		
         nb_fields = str_chop(parser_buf, buff_size, ',', str_index, ARRAY_SIZE(str_index));
         if (nb_fields != 13) {
             DEBUG_MSG("Warning: invalid RMC sentence (number of fields)\n");
-            return IGNORED;
+            return INVALID;
         }
         /* parse GPS status */
         gps_mod = *(parser_buf + str_index[12]); /* get first character, no need to bother with sscanf */
@@ -566,8 +395,13 @@ enum gps_msg lgw_parse_nmea(const char *serial_buff, int buff_size) {
         NMEA sentence format: $xxGGA,time,lat,NS,long,EW,quality,numSV,HDOP,alt,M,sep,M,diffAge,diffStation*cs<CR><LF>
         Valid fix: $GPGGA,092725.00,4717.11399,N,00833.91590,E,1,08,1.01,499.6,M,48.0,M,,*5B
         */
-        memcpy(parser_buf, serial_buff, buff_size);
+		        memcpy(parser_buf, serial_buff, buff_size);
         parser_buf[buff_size] = '\0';
+
+        if (!validate_nmea_checksum(parser_buf, buff_size)) {
+            DEBUG_MSG("Warning: invalid GGA sentence (bad checksum)\n");
+            return IGNORED;
+        }
         nb_fields = str_chop(parser_buf, buff_size, ',', str_index, ARRAY_SIZE(str_index));
         if (nb_fields != 15) {
             DEBUG_MSG("Warning: invalid GGA sentence (number of fields)\n");
@@ -593,7 +427,7 @@ enum gps_msg lgw_parse_nmea(const char *serial_buff, int buff_size) {
     } else {
         DEBUG_MSG("Note: ignored NMEA sentence\n"); /* quite verbose */
         return IGNORED;
-    }
+	}
 }
 
 /* ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ */
@@ -696,10 +530,7 @@ int lgw_gps_sync(struct tref *ref, uint32_t count_us, struct timespec utc, struc
         /* value no aberrant -> sync with smoothed slope */
         ref->systime = time(NULL);
         ref->count_us = count_us;
-        ref->utc.tv_sec = utc.tv_sec;
-        ref->utc.tv_nsec = utc.tv_nsec;
-        ref->gps.tv_sec = gps_time.tv_sec;
-        ref->gps.tv_nsec = gps_time.tv_nsec;
+        ref->utc = utc;
         ref->xtal_err = slope;
         aber_min2 = aber_min1;
         aber_min1 = aber_n0;
@@ -708,10 +539,7 @@ int lgw_gps_sync(struct tref *ref, uint32_t count_us, struct timespec utc, struc
         /* 3 successive aberrant values -> sync reset (keep xtal_err) */
         ref->systime = time(NULL);
         ref->count_us = count_us;
-        ref->utc.tv_sec = utc.tv_sec;
-        ref->utc.tv_nsec = utc.tv_nsec;
-        ref->gps.tv_sec = gps_time.tv_sec;
-        ref->gps.tv_nsec = gps_time.tv_nsec;
+        ref->utc = utc;
         /* reset xtal_err only if the present value is out of range */
         if ((ref->xtal_err > PLUS_10PPM) || (ref->xtal_err < MINUS_10PPM)) {
             ref->xtal_err = 1.0;
